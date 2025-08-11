@@ -18,5 +18,5 @@ sudo apt-get -y install gmsh
 how to run?
 
 ```bash
-mpirun -n 1 python3 main.py
+mpirun -n 1 python3 hard_horizontal.py
 ```
