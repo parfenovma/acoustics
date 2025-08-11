@@ -25,7 +25,7 @@ u = ufl.TrialFunction(V)
 v = ufl.TestFunction(V)
 
 Q = 0.0001
-Sx = 0.1
+Sx = 0.2
 Sy = 0.5
 
 c0 = 340
