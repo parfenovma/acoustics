@@ -16,28 +16,50 @@ from dataclasses import dataclass
 # =============================================================================
 # 1. Configuration Data Class
 # =============================================================================
+# @dataclass
+# class SimulationConfig:
+#     """A single container for all simulation parameters."""
+#     width: float = 1.0
+#     height: float = 1.0
+#     A: float = 0.1
+#     num_waves: int = 3
+#     num_points_boundary: int = 50
+#     n_elem: int = 64
+#     deg: int = 2
+#     freq: float = 800.0
+#     Sx: float = 0.1
+#     Sy: float = 0.5
+#     boundary_type: str = 'wavy'  # 'wavy' or 'rigid'
+    
+#     # Physical constants
+#     c0: float = 340.0
+#     rho_0: float = 1.225
+    
+#     # Source properties
+#     Q: float = 0.0001
+#     alfa: float = 0.015 # for Gaussian source approximation
+
+# =============================================================================
+# 1. Configuration Data Class (Updated)
+# =============================================================================
 @dataclass
 class SimulationConfig:
     """A single container for all simulation parameters."""
-    width: float = 1.0
-    height: float = 1.0
-    A: float = 0.1
-    num_waves: int = 3
-    num_points_boundary: int = 50
-    n_elem: int = 64
-    deg: int = 2
-    freq: float = 800.0
-    Sx: float = 0.1
-    Sy: float = 0.5
-    boundary_type: str = 'wavy'  # 'wavy' or 'rigid'
+    width: float = 1.0; height: float = 1.0; A: float = 0.0; num_waves: int = 0
+    num_points_boundary: int = 50; n_elem: int = 64; deg: int = 2
+    boundary_type: str = 'rigid'
+
+    # Time-domain specific parameters
+    t_end: float = 0.006  # End time of simulation [s]
+    dt: float = 2e-6      # Time step [s] - MUST satisfy CFL condition
+
+    # Source parameters (for Ricker pulse)
+    source_freq: float = 2000.0 # Center frequency of the Ricker pulse [Hz]
+    source_delay: float = 0.0005 # Time delay for the pulse peak [s]
+    Sx: float = 0.5; Sy: float = 0.5
     
     # Physical constants
     c0: float = 340.0
-    rho_0: float = 1.225
-    
-    # Source properties
-    Q: float = 0.0001
-    alfa: float = 0.015 # for Gaussian source approximation
 
 # =============================================================================
 # 2. Interfaces (Abstract Base Classes)
@@ -332,28 +354,6 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from tqdm import tqdm # Для красивого индикатора прогресса
 
-# =============================================================================
-# 1. Configuration Data Class (Updated)
-# =============================================================================
-@dataclass
-class SimulationConfig:
-    """A single container for all simulation parameters."""
-    width: float = 1.0; height: float = 1.0; A: float = 0.0; num_waves: int = 0
-    num_points_boundary: int = 50; n_elem: int = 64; deg: int = 2
-    boundary_type: str = 'rigid'
-
-    # Time-domain specific parameters
-    t_end: float = 0.005  # End time of simulation [s]
-    dt: float = 2e-6      # Time step [s] - MUST satisfy CFL condition
-
-    # Source parameters (for Ricker pulse)
-    source_freq: float = 800.0 # Center frequency of the Ricker pulse [Hz]
-    source_delay: float = 0.0005 # Time delay for the pulse peak [s]
-    Sx: float = 0.2; Sy: float = 0.5
-    
-    # Physical constants
-    c0: float = 340.0
-
 
 # --- SOURCE IMPLEMENTATION ---
 class RickerPulseSource(ISourceTerm):
@@ -411,33 +411,22 @@ class TimeDomainWaveSolver(IProblemSolver):
         self.solver.setType(PETSc.KSP.Type.PREONLY)
         self.solver.getPC().setType(PETSc.PC.Type.LU)
         
-    def solve(self):
+    def solve(self, frames_to_store=10): # Added optional argument
         times = np.arange(0, self.config.t_end, self.config.dt)
         pressure_data = []
 
         print("Starting time-domain simulation...")
         for i, t in enumerate(tqdm(times)):
             self.source_amplitude.value = self.source_term.get_value_at_time(t)
-            
-            with self.b.localForm() as loc_b:
-                loc_b.set(0)
+            with self.b.localForm() as loc_b: loc_b.set(0)
             fem.petsc.assemble_vector(self.b, self.L)
-            
-            # Solve the linear system using pure PETSc vectors
             self.solver.solve(self.b, self.p_petsc)
-            
-            # --- FIX: Copy the data from the PETSc vector back to the dolfinx Function ---
-            self.p.x.array[:] = self.p_petsc.array
-            self.p.x.scatter_forward()
-            
-            # Update fields for the next step
-            self.p_n_1.x.array[:] = self.p_n.x.array
-            self.p_n.x.array[:] = self.p.x.array
-            
-            if i % 10 == 0:
+            self.p.x.array[:] = self.p_petsc.array; self.p.x.scatter_forward()
+            self.p_n_1.x.array[:] = self.p_n.x.array; self.p_n.x.array[:] = self.p.x.array
+            if i % frames_to_store == 0:
                 pressure_data.append(self.p.x.array.copy())
         
-        stored_times = times[::10]
+        stored_times = times[::frames_to_store]
         return np.array(pressure_data), stored_times
    
 
@@ -449,6 +438,7 @@ class MatplotlibTimeVisualizer(IVisualizer):
 
         # Setup for visualization (P1 space)
         V_vis = functionspace(mesh, ("Lagrange", 1))
+        self.V_sol = functionspace(mesh, ("Lagrange", config.deg))
         vertex_coords = V_vis.tabulate_dof_coordinates()
         self.triang = tri.Triangulation(vertex_coords[:, 0], vertex_coords[:, 1])
 
@@ -458,32 +448,28 @@ class MatplotlibTimeVisualizer(IVisualizer):
 
     def create_animation(self, pressure_over_time: np.ndarray, times: np.ndarray, output_filename=None):
         fig, ax = plt.subplots(figsize=(8, 6))
-
-        # Find absolute max pressure over the whole simulation for consistent color bar
-        vmax = np.max(np.abs(pressure_over_time))
         
+        # --- DEBUG FIX 2: Let matplotlib choose the color scale for each frame ---
+        # vmax = np.max(np.abs(pressure_over_time)) * 0.5 
+        
+        p_sol_frame = Function(self.V_sol)
+
         def update(frame):
             ax.clear()
             self._setup_plot_aesthetics(ax)
-            
-            # Project high-order solution to P1 for visualization
-            # This is a bit of a hack. A proper implementation would use interpolation.
-            if self.deg > 1:
-                # This assumes nodes are ordered similarly, which is often true
-                # but not guaranteed for complex meshes. A proper projection is better.
-                self.p_vis.x.array[:] = pressure_over_time[frame, :len(self.p_vis.x.array)]
-            else:
-                 self.p_vis.x.array[:] = pressure_over_time[frame]
-            
-            # Plot the P1 pressure field
-            ax.tricontourf(self.triang, self.p_vis.x.array, levels=50, cmap='RdBu_r', vmin=-vmax, vmax=vmax)
-            ax.set_title(f"Pressure at t = {times[frame]*1000:.2f} ms")
+            p_sol_frame.x.array[:] = pressure_over_time[frame]
+            self.p_vis.interpolate(p_sol_frame)
+
+            # --- DEBUG FIX 2 (cont.): Remove fixed vmin/vmax ---
+            ax.tricontourf(self.triang, self.p_vis.x.array, levels=40, cmap='RdBu_r')
+            ax.set_title(f"Pressure at t = {times[frame]*1000:.3f} ms") # More precision in title
             return []
 
         ani = animation.FuncAnimation(fig, update, frames=len(times), interval=50, blit=False)
         if output_filename:
+            print(f"Saving animation to {output_filename}...")
             ani.save(output_filename, writer='pillow', fps=20, dpi=120)
-            print(f"Animation saved to {output_filename}")
+            print("Animation saved.")
         
         return ani, fig
 
@@ -493,7 +479,7 @@ class MatplotlibTimeVisualizer(IVisualizer):
         ax.set_aspect('equal')
         ax.set_xlabel('X [m]'); ax.set_ylabel('Y [m]')
         ax.add_patch(plt.Rectangle((0, 0), cfg.width, cfg.height, fill=False, color='k', lw=2))
-        ax.plot(cfg.Sx, cfg.Sy, 'r*', markersize=10, label='Source')
+        ax.plot(cfg.Sx, cfg.Sy, 'black', markersize=20, label='Source')
         ax.legend(loc="upper right")
         ax.set_xlim(-0.1, cfg.width + 0.1)
         ax.set_ylim(-0.1, cfg.height + 0.1)
@@ -523,32 +509,38 @@ class MatplotlibTimeVisualizer(IVisualizer):
 #         return msh, None # No facet markers needed for this simple case
 
 def main_time_domain():
-    config = SimulationConfig()
-    
-    # Check CFL condition for stability
-    # c * dt / h < 1, where h is the smallest element size
+    # --- DEBUG FIX 1: Change simulation parameters ---
+    config = SimulationConfig(
+        t_end=0.001,       # Stop before the first reflection
+        dt=2e-6,           # Keep dt small for stability
+        source_delay=0.0003  # Make the pulse appear earlier
+    )
+
     h_min = 1.0 / config.n_elem
     cfl = config.c0 * config.dt / h_min
-    print(f"Mesh size (h): ~{h_min:.4f} m")
-    print(f"CFL number: {cfl:.3f}")
-    if cfl > 0.5: # Use a safety factor
-        print("WARNING: CFL condition may not be met. Simulation might be unstable.")
+    print(f"Mesh size (h): ~{h_min:.4f} m"); print(f"CFL number (estimated): {cfl:.1f}")
+    if cfl > 0.5:
+        print("WARNING: Estimated CFL > 0.5. Simulation might be unstable.")
 
-    # 1. Generate Mesh
-    mesh_generator = GmshChannelMesh(config)
-    mesh, _ = mesh_generator.generate()
+    mesh_generator = GmshChannelMesh(config); mesh, _ = mesh_generator.generate()
     
-    # 2. Create Solver and inject dependencies
-    V_solver = functionspace(mesh, ("Lagrange", config.deg))
-    source = RickerPulseSource(V_solver, config)
+    # We need to tell the solver to save frames more frequently
+    # This is a bit of a hack, we can modify the solver or just do it here
+    # For now, let's modify the solver to accept this parameter.
+    
+    # Let's modify TimeDomainWaveSolver to accept `frames_to_store`
+    V_solver_space = functionspace(mesh, ("Lagrange", config.deg))
+    source = RickerPulseSource(V_solver_space, config)
+    
+    # We will modify the solver class to accept this
     solver = TimeDomainWaveSolver(mesh, source, config)
     
-    # 3. Run simulation
-    pressure_history, times_stored = solver.solve()
+    # --- DEBUG FIX 3: Let's modify what is returned to save more frames ---
+    # To do this cleanly, let's add an argument to the solve() method.
+    pressure_history, times_stored = solver.solve(frames_to_store=2) # Store every 2nd frame
     
-    # 4. Visualize results
     visualizer = MatplotlibTimeVisualizer(mesh, config)
-    visualizer.create_animation(pressure_history, times_stored, "time_domain_pulse.gif")
+    visualizer.create_animation(pressure_history, times_stored, "initial_wave.gif")
     
     plt.show()
 
