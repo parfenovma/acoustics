@@ -286,7 +286,7 @@ def main():
     params = {
         'width': 1.0,
         'height': 1.0,
-        'A': 0.05,           # Амплитуда волны
+        'A': 0.1,           # Амплитуда волны
         'num_waves': 3,      # Количество волн
         'num_points_boundary': 50,
         'n_elem': 64,
