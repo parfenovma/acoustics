@@ -20,3 +20,7 @@ how to run?
 ```bash
 mpirun -n 1 python3 hard_horizontal.py
 ```
+
+## notes
+1) Current version is draft, I will refactor it eventially (at least I hope so). The most useful script is currently in `/exp/general_abstractions.py`
+2) To contribute, installing git-lfs is needed
