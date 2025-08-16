@@ -105,6 +105,108 @@ class HelmholtzProblemSolver(IProblemSolver):
         problem.solve()
         return uh
 
+class PMLWaveSolver(IProblemSolver):
+    def __init__(self, mesh, cell_markers, source, config):
+        self.mesh, self.cell_markers, self.source, self.config = mesh, cell_markers, source, config
+        cfg = config
+        
+        # --- 1. Define Mixed Function Space ---
+        P_el = ufl.FiniteElement("Lagrange", mesh.ufl_cell(), cfg.deg)
+
+    # Создаем смешанное пространство, просто передавая КОРТЕЖ из элементов в functionspace
+        self.V = fem.functionspace(mesh, (P_el, P_el, P_el))
+        
+        # --- 2. Define trial and test functions ---
+        # p, px, py are for step n+1
+        # q, qx, qy are test functions
+        (self.p, self.px, self.py) = ufl.TrialFunctions(self.V)
+        (q, qx, qy) = ufl.TestFunctions(self.V)
+
+        # --- 3. Define functions for previous time steps ---
+        self.sol_n = fem.Function(self.V)   # Solution at step n
+        self.sol_n_1 = fem.Function(self.V) # Solution at step n-1
+        p_n, px_n, py_n = ufl.split(self.sol_n)
+        p_n_1, px_n_1, py_n_1 = ufl.split(self.sol_n_1)
+
+        # --- 4. Define PML damping function sigma ---
+        # sigma is non-zero only in the PML region
+        V_sigma = fem.functionspace(mesh, ("DG", 0))
+        self.sigma_x = fem.Function(V_sigma)
+        self.sigma_y = fem.Function(V_sigma)
+
+        pml_cells = cell_markers.find(2) # Find all cells with tag 2 (PML)
+        # Простая функция затухания, нарастающая от границ основной области
+        def sigma_func(x, dim, boundary):
+            val = np.zeros_like(x[0])
+            dist = np.abs(x[dim] - boundary)
+            val[:] = cfg.pml_sigma_max * (dist / cfg.pml_thickness)**2
+            return val
+        
+        self.sigma_x.interpolate(lambda x: sigma_func(x, 0, 0.0), pml_cells)
+        self.sigma_x.interpolate(lambda x: sigma_func(x, 0, cfg.width), pml_cells)
+        self.sigma_y.interpolate(lambda x: sigma_func(x, 1, 0.0), pml_cells)
+        self.y_sigma.interpolate(lambda x: sigma_func(x, 1, cfg.height), pml_cells)
+
+        # --- 5. Define Variational Formulation ---
+        c0, dt = cfg.c0, cfg.dt
+        source_spatial = source.get_spatial_component()
+        self.source_amplitude = fem.Constant(mesh, PETSc.ScalarType(0.0))
+
+        # Time discretization coeffs
+        c1 = (2 - dt*self.sigma_x)/(2 + dt*self.sigma_x)
+        c2 = (2*dt)/(2 + dt*self.sigma_x)
+        d1 = (2 - dt*self.sigma_y)/(2 + dt*self.sigma_y)
+        d2 = (2*dt)/(2 + dt*self.sigma_y)
+        
+        # Weak form for p, px, py
+        dx_measure = ufl.Measure("dx", domain=mesh)
+        
+        F = ( (self.p - p_n - self.px - self.py) * q * dx_measure
+            + (self.px - c1*px_n - c2*c0**2 * ufl.Dx(p_n,0)*ufl.Dx(qx,0)) * qx * dx_measure
+            + (self.py - d1*py_n - d2*c0**2 * ufl.Dx(p_n,1)*ufl.Dx(qy,1)) * qy * dx_measure )
+
+        self.a, self.L = ufl.system.lhs(F), ufl.system.rhs(F)
+
+        # Source term added to RHS 'p' equation
+        self.L -= ufl.inner(self.source_amplitude * source_spatial, q) * dx_measure
+        
+        # --- 6. Solver Setup ---
+        # (similar to before, but for a mixed system)
+        self.A = fem.petsc.assemble_matrix(ufl.form(self.a))
+        self.A.assemble()
+        self.b = fem.petsc.create_vector(ufl.form(self.L))
+        self.solver = PETSc.KSP().create(mesh.comm)
+        self.solver.setOperators(self.A)
+        self.solver.setType(PETSc.KSP.Type.PREONLY)
+        self.solver.getPC().setType(PETSc.PC.Type.LU)
+        self.sol = fem.Function(self.V)
+
+    def solve(self, frames_to_store=20):
+        # Time-stepping loop
+        times = np.arange(0, self.config.t_end, self.config.dt)
+        pressure_data = [] # Will store only the 'p' component
+        
+        # Subspace for extracting the pressure component 'p'
+        V_p, _ = self.V.sub(0).collapse()
+
+        print("Starting PML simulation...")
+        for i, t in enumerate(tqdm(times)):
+            self.source_amplitude.value = self.source.get_value_at_time(t)
+            with self.b.localForm() as loc_b: loc_b.set(0)
+            fem.petsc.assemble_vector(self.b, ufl.form(self.L))
+
+            self.solver.solve(self.b, self.sol.vector)
+            
+            self.sol_n_1.x.array[:] = self.sol_n.x.array
+            self.sol_n.x.array[:] = self.sol.x.array
+
+            if i % frames_to_store == 0:
+                p_component = self.sol.sub(0).collapse()
+                pressure_data.append(p_component.x.array.copy())
+        
+        stored_times = times[::frames_to_store]
+        return np.array(pressure_data), stored_times
+
 
 class TimeDomainConfigProtocol(cfg.ConfigProtocol):
     t_end: float  # End time of simulation [s]
