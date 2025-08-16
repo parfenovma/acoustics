@@ -20,7 +20,7 @@ how to run?
 
 *Currently I've tried only one-thread mode, and get SEGFAULT in other cases.*
 ```bash
-mpirun -n 1 python3 src
+mpirun -n 1 python3 -m src
 ```
 
 

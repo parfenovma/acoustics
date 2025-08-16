@@ -110,7 +110,12 @@ class MatplotlibTimeVisualizer(IVisualizer):
         fig, ax = plt.subplots(figsize=(8, 6))
         
         # --- DEBUG FIX 2: Let matplotlib choose the color scale for each frame ---
-        # vmax = np.max(np.abs(pressure_over_time)) * 0.5 
+        abs_pressures = np.abs(pressure_over_time.flatten())
+        vmax = np.percentile(abs_pressures, 99.5)
+        
+        print(f"Robust vmax calculated using 99.5th percentile: {vmax:.2e}")
+        vmax = 0.1
+        vmin = -vmax
         
         p_sol_frame = fem.Function(self.V_sol)
 
@@ -120,7 +125,7 @@ class MatplotlibTimeVisualizer(IVisualizer):
             p_sol_frame.x.array[:] = pressure_over_time[frame]
             self.p_vis.interpolate(p_sol_frame)
 
-            ax.tricontourf(self.triang, self.p_vis.x.array, levels=40, cmap='RdBu_r')
+            ax.tricontourf(self.triang, self.p_vis.x.array, levels=40, cmap='RdBu_r', vmax=vmax, vmin=vmin)
             ax.set_title(f"Pressure at t = {times[frame]*1000:.3f} ms") # More precision in title
             return []
 

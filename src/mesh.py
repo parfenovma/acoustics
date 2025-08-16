@@ -9,7 +9,7 @@ import mpi4py.MPI as MPI
 
 class IMeshGenerator(abc.ABC):
     @abc.abstractmethod
-    def generate(self) -> tuple[dolfinx.Mesh, ...]:
+    def generate(self) -> tuple[dolfinx.mesh.Mesh, ...]:
         pass
 
 

@@ -29,10 +29,10 @@ def main():
     
     solver: problem.IProblemSolver = problem.TimeDomainWaveSolver(mesh, source, config)
     
-    pressure_history, times_stored = solver.solve(frames_to_store=2) # Store every 2nd frame
+    pressure_history, times_stored = solver.solve(frames_to_store=10) # Store every 2nd frame
     
     visualizer: vis.IVisualizer = vis.MatplotlibTimeVisualizer(mesh, config)
-    visualizer.create_animation(pressure_history, times_stored, "animations/initial_wave_hamming_modified.gif")
+    visualizer.create_animation(pressure_history, times_stored, "animations/initial_wave_hamming_modified_visual.gif")
     
     plt.show()
 
