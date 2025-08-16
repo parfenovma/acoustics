@@ -37,5 +37,45 @@ def main():
     plt.show()
 
 
+def main_w_pml():
+    # --- Case 1: PML on all boundaries ---
+    print("\n--- Running Case 1: Full PML Boundaries ---")
+    config1 = cfg.TimeDomainSimulationConfig()
+    
+    # 1. Сетка с PML со всех сторон
+    mesh_gen1 = msh.GmshMeshWithPML(config1, pml_boundaries=["left", "right", "top", "bottom"])
+    mesh1, cell_markers1 = mesh_gen1.generate()
+
+    # 2. Источник и решатель PML
+    V_space1 = fem.functionspace(mesh1, ("Lagrange", config1.deg))
+    source1 = problem.HammingPulseSource(V_space1, config1)
+    solver1 = problem.PMLWaveSolver(mesh1, cell_markers1, source1, config1)
+
+    # 3. Решение и визуализация
+    pressure_history1, times1 = solver1.solve(frames_to_store=config1.frames_to_store)
+    visualizer1 = vis.MatplotlibTimeVisualizer(mesh1, config1)
+    visualizer1.create_animation(pressure_history1, times1, "pml_full.gif")
+    plt.show()
+
+    # --- Case 2: Waveguide with PML on sides ---
+    print("\n--- Running Case 2: Waveguide with PML ---")
+    config2 = cfg.SimulationConfig()
+    
+    # 1. Сетка с PML только слева и справа
+    mesh_gen2 = msh.GmshMeshWithPML(config2, pml_boundaries=["left", "right"])
+    mesh2, cell_markers2 = mesh_gen2.generate()
+    
+    # 2. Тот же решатель PML, он сам разберется, где применять затухание
+    V_space2 = fem.functionspace(mesh2, ("Lagrange", config2.deg))
+    source2 = problem.HammingPulseSource(V_space2, config2)
+    solver2 = problem.PMLWaveSolver(mesh2, cell_markers2, source2, config2)
+    
+    # 3. Решение и визуализация
+    pressure_history2, times2 = solver2.solve(frames_to_store=config2.frames_to_store)
+    visualizer2 = vis.MatplotlibTimeVisualizer(mesh2, config2)
+    visualizer2.create_animation(pressure_history2, times2, "pml_waveguide.gif")
+    plt.show()
+
 if __name__ == "__main__":
-    main()
+    # main()
+    main_w_pml()
