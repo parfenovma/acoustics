@@ -55,6 +55,9 @@ class TimeDomainSimulationConfig:
     # Physical constants
     c0: float = 340.0
 
+    # PML parameters
+    pml_thickness: float = 0.1 # Толщина PML слоя
+    pml_sigma_max: float = 5000.0 # Максимальное значение затухания
 
 @dataclasses.dataclass
 class FrequencyDomainSimulationConfig:
