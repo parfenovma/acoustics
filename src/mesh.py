@@ -1,4 +1,5 @@
 import abc
+import enum
 import numpy as np
 import gmsh
 import dolfinx
@@ -67,3 +68,77 @@ class GmshChannelMesh(IMeshGenerator):
             y = y_func(x)
             points.append(gmsh.model.geo.addPoint(x, y, 0))
         return points
+
+
+class PMLConfigProtocol(cfg.ConfigProtocol):
+    pml_thickness: float
+    pml_sigma_max: float
+
+class EPMLBoundaries(enum.Enum):
+    BOTTOM = "bottom"
+    TOP = "top"
+    LEFT = "left"
+    RIGHT = "right"
+
+
+class GmshMeshWithPML(IMeshGenerator):
+    def __init__(self, config: PMLConfigProtocol, pml_boundaries: list[EPMLBoundaries]):
+        """
+        Args:
+            pml_boundaries: A list of strings, e.g., ["left", "right", "top", "bottom"]
+        """
+        self.config = config
+        self.pml_boundaries = set(pml_boundaries)
+
+    def generate(self):
+        cfg = self.config
+        L_pml = cfg.pml_thickness
+        gmsh.initialize()
+        gmsh.model.add("pml_mesh")
+        
+        # Tags for physical groups
+        DOMAIN_TAG, PML_TAG = 1, 2
+
+        # Main domain
+        main_rect = gmsh.model.occ.addRectangle(0, 0, 0, cfg.width, cfg.height)
+        
+        # Create PML layers
+        pml_rects = []
+        if "bottom" in self.pml_boundaries:
+            pml_rects.append(gmsh.model.occ.addRectangle(0, -L_pml, 0, cfg.width, L_pml))
+        if "top" in self.pml_boundaries:
+            pml_rects.append(gmsh.model.occ.addRectangle(0, cfg.height, 0, cfg.width, L_pml))
+        if "left" in self.pml_boundaries:
+            pml_rects.append(gmsh.model.occ.addRectangle(-L_pml, -L_pml, 0, L_pml, cfg.height + 2*L_pml if "top" in self.pml_boundaries and "bottom" in self.pml_boundaries else cfg.height + L_pml if "top" in self.pml_boundaries else cfg.height ))
+        if "right" in self.pml_boundaries:
+            pml_rects.append(gmsh.model.occ.addRectangle(cfg.width, -L_pml if "bottom" in self.pml_boundaries else 0, 0, L_pml, cfg.height + 2*L_pml if "top" in self.pml_boundaries and "bottom" in self.pml_boundaries else cfg.height + L_pml if "top" in self.pml_boundaries else cfg.height))
+        
+        #TODO@parfenovma: refactor this part, may be some artifacts in corners
+        all_shapes = [(2, main_rect)] + [(2, r) for r in pml_rects]
+        gmsh.model.occ.fragment(all_shapes, [])
+        gmsh.model.occ.synchronize()
+
+        # Find and tag regions
+        domain_center = (cfg.width/2, cfg.height/2, 0)
+        vols = gmsh.model.getEntities(dim=2)
+        main_domain_tag = -1
+        pml_domain_tags = []
+        for vol in vols:
+            com = gmsh.model.occ.getCenterOfMass(vol[0], vol[1])
+            if np.allclose(com, domain_center, atol=cfg.width/2):
+                main_domain_tag = vol[1]
+            else:
+                pml_domain_tags.append(vol[1])
+
+        gmsh.model.addPhysicalGroup(2, [main_domain_tag], DOMAIN_TAG)
+        if pml_domain_tags:
+            gmsh.model.addPhysicalGroup(2, pml_domain_tags, PML_TAG)
+
+        # Meshing
+        lc = 1.0 / cfg.n_elem
+        gmsh.option.setNumber("Mesh.CharacteristicLengthMax", lc)
+        gmsh.model.mesh.generate(2)
+        
+        msh, cell_markers, _ = io.gmshio.model_to_mesh(gmsh.model, MPI.COMM_WORLD, 0, gdim=2)
+        gmsh.finalize()
+        return msh, cell_markers
