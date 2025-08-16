@@ -16,13 +16,65 @@ sudo apt-get -y install gmsh
 export PYTHONPATH=path/to/your/directory/acoustics
 ```
 
+### New version:
+```bash
+sudo add-apt-repository ppa:fenics-packages/fenics;
+sudo apt update;
+sudo apt install fenicsx;
+```
+**For some reasons, versions of fenicsx, distributed via pip and conda, are deprecated now, so let's build them locally!**
+
+*How hard can it be?*
+
+
+basix
+```bash
+python3 -m venv venv
+source venv/bin/activate
+python3 -m pip install git+https://github.com/FEniCS/basix.git@main
+```
+
+also, we need to install basicx .so version (to build dolfinx)
+
+```bash
+git clone https://github.com/FEniCS/basix.git basicx
+cd basicx/cpp/
+cmake -DCMAKE_BUILD_TYPE=Release -B build-dir -S .
+cmake --build build-dir
+sudo cmake --install build-dir
+```
+
+ufl
+```bash
+python3 -m pip install git+https://github.com/FEniCS/ufl.git@main
+```
+
+ffcx
+```bash
+python3 -m pip install git+https://github.com/FEniCS/ffcx.git@main
+```
+
+dolfinx
+```bash
+git clone https://github.com/FEniCS/dolfinx.git dolfinx
+cd dolfinx/cpp
+mkdir build
+cd build
+cmake ..
+sudo make install
+source /usr/local/lib/dolfinx/dolfinx.conf
+cd ../../python/
+python -m pip install petsc4py mpi4py
+pip install .
+```
+
+
 how to run?
 
-*Currently I've tried only one-thread mode, and get SEGFAULT in other cases.*
+**Currently I've tried only one-thread mode, and get SEGFAULT in other cases.**
 ```bash
 mpirun -n 1 python3 -m src
 ```
-
 
 ## notes
 1) You can watch my tries to structure this project properly via commit history )
