@@ -5,6 +5,7 @@ import dolfinx.fem.petsc as petsc
 import ufl
 import tqdm
 import petsc4py.PETSc as PETSc
+import ufl.finiteelement
 import src.config as cfg
 
 
@@ -111,6 +112,8 @@ class PMLWaveSolver(IProblemSolver):
         cfg = config
         
         # --- 1. Define Mixed Function Space ---
+
+        # TODO@parfenovma: fix this afrer dolfinx release
         P_el = ufl.finiteelement.FiniteElement("Lagrange", mesh.ufl_cell(), cfg.deg, (), ufl.pullback.identity_pullback, ufl.sobolevspace.H1)
         P_el.is_mixed = False
         P_el.is_quadrature = True
@@ -333,6 +336,88 @@ class TimeDomainWaveSolver(IProblemSolver):
             self.solver.solve(self.b, self.p_petsc)
             self.p.x.array[:] = self.p_petsc.array; self.p.x.scatter_forward()
             self.p_n_1.x.array[:] = self.p_n.x.array; self.p_n.x.array[:] = self.p.x.array
+            if i % frames_to_store == 0:
+                pressure_data.append(self.p.x.array.copy())
+        
+        stored_times = times[::frames_to_store]
+        return np.array(pressure_data), stored_times
+
+
+class ImpedanceBCSolver(IProblemSolver):
+    def __init__(self, mesh, facet_markers, source_term: ISourceTerm, config: TimeDomainConfigProtocol, bc_tags: list[int]):
+        """
+        Args:
+            bc_tags: A list of tags for boundaries where impedance BC should be applied.
+        """
+        self.mesh = mesh
+        self.facet_markers = facet_markers
+        self.source_term = source_term
+        self.config = config
+        self.bc_tags = bc_tags
+        
+        self.V = fem.functionspace(mesh, ("Lagrange", config.deg))
+        
+        # p_n+1, p_n, p_n-1
+        self.p = fem.Function(self.V)
+        self.p_n = fem.Function(self.V)
+        self.p_n_1 = fem.Function(self.V)
+        
+        u, v = ufl.TrialFunction(self.V), ufl.TestFunction(self.V)
+        c0, dt = config.c0, config.dt
+
+        # --- Вариационная форма с граничным членом ---
+        # Интеграл по границе dS
+        ds = ufl.Measure("ds", domain=mesh, subdomain_data=self.facet_markers)
+
+        # Слабая форма для ∇p⋅n = -(1/c₀) * ∂p/∂t
+        # ∂p/∂t аппроксимируем как (p - p_n-1) / (2*dt) - центральная разность
+        # Граничный член: ∫(∇p⋅n)v dS = - (1/c0) * ∫(∂p/∂t)v dS ≈ -1/(c0*2*dt) * ∫(p - p_n-1)v dS
+
+        # Правая часть (RHS)
+        source_amplitude = fem.Constant(mesh, PETSc.ScalarType(0.0))
+        source_spatial = source_term.get_spatial_component()
+        
+
+        # Левая часть (LHS) - содержит неизвестное 'p'
+        a = ufl.inner(u, v) * ufl.dx + sum((dt * c0) * ufl.inner(u, v) * ds(tag) for tag in self.bc_tags)
+
+        # Правая часть (RHS)
+        L = (ufl.inner(2 * self.p_n - self.p_n_1, v) * ufl.dx
+            - (c0 * dt)**2 * ufl.inner(ufl.grad(self.p_n), ufl.grad(v)) * ufl.dx
+            + (c0 * dt)**2 * ufl.inner(source_amplitude * source_spatial, v) * ufl.dx
+            + sum((dt * c0) * ufl.inner(self.p_n, v) * ds(tag) for tag in self.bc_tags))
+
+
+        # --- Настройка решателя ---
+        # Эта часть кода немного сложнее из-за нестандартной формы
+        self.source_amplitude = source_amplitude # Сохраняем для обновления
+        
+        # Используем PETSc для решения, как раньше
+        self.a_form = fem.form(a)
+        self.L_form = fem.form(L)
+        self.A = petsc.assemble_matrix(self.a_form)
+        self.A.assemble()
+        self.b = petsc.create_vector(self.L_form)
+        self.p_petsc = self.A.createVecRight()
+        self.solver = PETSc.KSP().create(mesh.comm)
+        self.solver.setOperators(self.A)
+        self.solver.setType(PETSc.KSP.Type.PREONLY)
+        self.solver.getPC().setType(PETSc.PC.Type.LU)
+        
+    def solve(self, frames_to_store=20):
+        # Цикл по времени идентичен предыдущему
+        times = np.arange(0, self.config.t_end, self.config.dt)
+        pressure_data = []
+
+        print("Starting impedance BC simulation...")
+        for i, t in enumerate(tqdm.tqdm(times)):
+            self.source_amplitude.value = self.source_term.get_value_at_time(t)
+            with self.b.localForm() as loc_b: loc_b.set(0)
+            petsc.assemble_vector(self.b, self.L_form)
+            self.solver.solve(self.b, self.p_petsc)
+            self.p.x.array[:] = self.p_petsc.array; self.p.x.scatter_forward()
+            self.p_n_1.x.array[:] = self.p_n.x.array
+            self.p_n.x.array[:] = self.p.x.array
             if i % frames_to_store == 0:
                 pressure_data.append(self.p.x.array.copy())
         

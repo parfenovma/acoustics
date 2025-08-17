@@ -142,3 +142,46 @@ class GmshMeshWithPML(IMeshGenerator):
         msh, cell_markers, _ = io.gmshio.model_to_mesh(gmsh.model, MPI.COMM_WORLD, 0, gdim=2)
         gmsh.finalize()
         return msh, cell_markers
+
+
+class GmshBoundaryTaggedMesh(IMeshGenerator):
+    def __init__(self, config: PMLConfigProtocol):
+        self.config = config
+
+    def generate(self):
+        cfg = self.config
+        gmsh.initialize()
+        gmsh.model.add("boundary_tagged_mesh")
+        
+        # Создаем геометрию
+        p1 = gmsh.model.occ.addPoint(0, 0, 0)
+        p2 = gmsh.model.occ.addPoint(cfg.width, 0, 0)
+        p3 = gmsh.model.occ.addPoint(cfg.width, cfg.height, 0)
+        p4 = gmsh.model.occ.addPoint(0, cfg.height, 0)
+        
+        l_bottom = gmsh.model.occ.addLine(p1, p2)
+        l_right = gmsh.model.occ.addLine(p2, p3)
+        l_top = gmsh.model.occ.addLine(p3, p4)
+        l_left = gmsh.model.occ.addLine(p4, p1)
+        
+        curve_loop = gmsh.model.occ.addCurveLoop([l_bottom, l_right, l_top, l_left])
+        surface = gmsh.model.occ.addPlaneSurface([curve_loop])
+        gmsh.model.occ.synchronize()
+
+        # Создаем физические группы для границ и домена
+        # Теги: 1-низ, 2-право, 3-верх, 4-лево, 5-домен
+        gmsh.model.addPhysicalGroup(1, [l_bottom], 1)
+        gmsh.model.addPhysicalGroup(1, [l_right], 2)
+        gmsh.model.addPhysicalGroup(1, [l_top], 3)
+        gmsh.model.addPhysicalGroup(1, [l_left], 4)
+        gmsh.model.addPhysicalGroup(2, [surface], 5)
+
+        # Меширование
+        lc = 1.0 / cfg.n_elem
+        gmsh.option.setNumber("Mesh.CharacteristicLengthMax", lc)
+        gmsh.model.mesh.generate(2)
+        
+        # Импорт в dolfinx
+        msh, _, facet_markers = io.gmshio.model_to_mesh(gmsh.model, MPI.COMM_WORLD, 0, gdim=2)
+        gmsh.finalize()
+        return msh, facet_markers

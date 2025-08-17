@@ -52,8 +52,8 @@ python3 -m pip install git+https://github.com/FEniCS/basix.git@main
 also, we need to install basicx .so version (to build dolfinx)
 
 ```bash
-git clone https://github.com/FEniCS/basix.git basicx
-cd basicx/cpp/
+git clone https://github.com/FEniCS/basix.git lbasicx
+cd lbasicx/cpp/
 cmake -DCMAKE_BUILD_TYPE=Release -B build-dir -S .
 cmake --build build-dir
 sudo cmake --install build-dir
@@ -71,8 +71,8 @@ python3 -m pip install git+https://github.com/FEniCS/ffcx.git@main
 
 dolfinx
 ```bash
-git clone https://github.com/FEniCS/dolfinx.git dolfinx
-cd dolfinx/cpp
+git clone https://github.com/FEniCS/dolfinx.git ldolfinx
+cd ldolfinx/cpp
 mkdir build
 cd build
 cmake ..
@@ -80,6 +80,7 @@ sudo make install
 source /usr/local/lib/dolfinx/dolfinx.conf
 cd ../../python/
 export CMAKE_ARGS="-DMPI_C_COMPILER=$(which mpicc) -DMPI_CXX_COMPILER=$(which mpicxx) -DCMAKE_BUILD_TYPE=Release"
+add enable_language(C) after project(...) in CMakeLists.txt
 pip install -r build-requirements.txt
 pip install --check-build-dependencies --no-build-isolation --no-cache-dir -v .
 ```
