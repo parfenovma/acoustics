@@ -16,11 +16,26 @@ sudo apt-get -y install gmsh
 export PYTHONPATH=path/to/your/directory/acoustics
 ```
 
+### Quick guide to setup conda:
+```bash
+mkdir -p ~/miniconda3;
+wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O ~/miniconda3/miniconda.sh;
+bash ~/miniconda3/miniconda.sh -b -u -p ~/miniconda3;
+rm ~/miniconda3/miniconda.sh;
+source ~/miniconda3/bin/activate;
+conda init --all;
+```
+
+after that, reopen your terminal
+
+
 ### New version:
 ```bash
 sudo add-apt-repository ppa:fenics-packages/fenics;
 sudo apt update;
 sudo apt install fenicsx;
+conda create -n dolfinx-new -c conda-forge fenics-dolfinx petsc mpich mpi4py pugixml spdlog;
+pip install matplotlib tqdm gmsh;
 ```
 **For some reasons, versions of fenicsx, distributed via pip and conda, are deprecated now, so let's build them locally!**
 
@@ -64,8 +79,9 @@ cmake ..
 sudo make install
 source /usr/local/lib/dolfinx/dolfinx.conf
 cd ../../python/
-python -m pip install petsc4py mpi4py
-pip install .
+export CMAKE_ARGS="-DMPI_C_COMPILER=$(which mpicc) -DMPI_CXX_COMPILER=$(which mpicxx) -DCMAKE_BUILD_TYPE=Release"
+pip install -r build-requirements.txt
+pip install --check-build-dependencies --no-build-isolation --no-cache-dir -v .
 ```
 
 

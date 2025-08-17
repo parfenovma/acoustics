@@ -111,10 +111,12 @@ class PMLWaveSolver(IProblemSolver):
         cfg = config
         
         # --- 1. Define Mixed Function Space ---
-        P_el = ufl.FiniteElement("Lagrange", mesh.ufl_cell(), cfg.deg)
-
-    # Создаем смешанное пространство, просто передавая КОРТЕЖ из элементов в functionspace
-        self.V = fem.functionspace(mesh, (P_el, P_el, P_el))
+        P_el = ufl.finiteelement.FiniteElement("Lagrange", mesh.ufl_cell(), cfg.deg, (), ufl.pullback.identity_pullback, ufl.sobolevspace.H1)
+        P_el.is_mixed = False
+        P_el.is_quadrature = True
+        V_element = ufl.finiteelement.MixedElement([P_el, P_el, P_el])
+        V_element.is_mixed = True
+        self.V = fem.functionspace(mesh, V_element)
         
         # --- 2. Define trial and test functions ---
         # p, px, py are for step n+1
