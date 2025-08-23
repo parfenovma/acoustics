@@ -19,6 +19,7 @@ class ConfigProtocol(typing.Protocol):
     """
     c0: float  # Speed of sound [m/s]
 
+    damping_coefficient: float
 
     # geometric parameters
     width: float
@@ -32,12 +33,17 @@ class ConfigProtocol(typing.Protocol):
     Sx: float
     Sy: float
 
+    # visualization params
+    vmax: float
+    frames_to_store: int
 
 @dataclasses.dataclass
 class TimeDomainSimulationConfig:
     width: float = 1.0; height: float = 1.0; A: float = 0.0; num_waves: int = 0
     num_points_boundary: int = 50; n_elem: int = 64; deg: int = 2
     boundary_type: str = 'rigid'
+    # absorbtion
+    damping_coefficient: float = 200.0
 
     # Time-domain specific parameters
     t_end: float = 0.006  # End time of simulation [s]
@@ -46,6 +52,7 @@ class TimeDomainSimulationConfig:
     # # Source parameters (for Ricker pulse)
     # source_freq: float = 2000.0 # Center frequency of the Ricker pulse [Hz]
     # source_delay: float = 0.0005 # Time delay for the pulse peak [s]
+    rho_0: float = 1.225
 
     # Hamming pulse 
     pulse_duration: float = 0.001 # Hamming window duration [s]
@@ -56,8 +63,13 @@ class TimeDomainSimulationConfig:
     c0: float = 340.0
 
     # PML parameters
-    pml_thickness: float = 0.1 # Толщина PML слоя
-    pml_sigma_max: float = 5000.0 # Максимальное значение затухания
+    pml_thickness: float = 0.1
+    pml_sigma_max: float = 5000.0
+
+    # Visualization params
+    vmax: float = 0.001
+    frames_to_store: int = 20
+
 
 @dataclasses.dataclass
 class FrequencyDomainSimulationConfig:
@@ -80,3 +92,7 @@ class FrequencyDomainSimulationConfig:
     # Source properties
     Q: float = 0.0001
     alfa: float = 0.015 # for Gaussian source approximation
+
+    # Visualization params
+    vmax: float = 0.001
+    frames_to_store: int = 20
