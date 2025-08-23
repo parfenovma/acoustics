@@ -72,6 +72,36 @@ def main_w_pml():
     visualizer2.create_animation(pressure_history2, times2, "animations/impedance_waveguide.gif")
     plt.show()
 
+
+def main_damped_and_impedance():
+    config = cfg.TimeDomainSimulationConfig(
+        damping_coefficient=200.0, 
+        # visualization params are in config now
+        t_end=0.005,
+        vmax=0.001
+    )
+    
+    mesh_gen = msh.GmshBoundaryTaggedMesh(config)
+    mesh, facet_markers = mesh_gen.generate()
+    
+    V_space = fem.functionspace(mesh, ("Lagrange", config.deg))
+    source = problem.HammingPulseSource(V_space, config)
+    
+    boundary_conditions = {
+        1: "absorbing", # bottom
+        2: "hard", # right
+        3: 100, # top
+        4: "hard"  # left
+    }
+    
+    solver = problem.DampedWaveSolver(mesh, facet_markers, source, config, bc_config=boundary_conditions)
+    
+    pressure_history, times_stored = solver.solve(frames_to_store=config.frames_to_store)
+    
+    visualizer = vis.MatplotlibTimeVisualizer(mesh, config)
+    visualizer.create_animation(pressure_history, times_stored, "damped_wave.gif")
+    
+    plt.show()
+
 if __name__ == "__main__":
-    # main()
-    main_w_pml()
+    main_damped_and_impedance()

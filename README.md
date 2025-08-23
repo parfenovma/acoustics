@@ -3,7 +3,15 @@ For now it might be useful for modeling acoustic waves in partially limited envi
 Under the hood it's a [fenicsx project](https://fenicsproject.org/) backends and gmsh for mesh generation.
 time domain and frequency domain animations is supported
 
-how to setup env?
+## how to run?
+
+**Currently I've tried only one-thread mode, and get SEGFAULT in other cases.**
+```bash
+mpirun -n 1 python3 -m src
+```
+
+
+## how to setup env?
 
 ```bash
 conda init

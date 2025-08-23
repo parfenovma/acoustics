@@ -1,4 +1,5 @@
 import abc
+import typing as tp
 import numpy as np
 import dolfinx.fem as fem
 import dolfinx.fem.petsc as petsc
@@ -216,6 +217,7 @@ class PMLWaveSolver(IProblemSolver):
 class TimeDomainConfigProtocol(cfg.ConfigProtocol):
     t_end: float  # End time of simulation [s]
     dt: float  # Time step [s] - MUST satisfy CFL condition
+    rho_0: float
 
 
 class RickerPulseConfigProtocol(TimeDomainConfigProtocol):
@@ -418,6 +420,95 @@ class ImpedanceBCSolver(IProblemSolver):
             self.p.x.array[:] = self.p_petsc.array; self.p.x.scatter_forward()
             self.p_n_1.x.array[:] = self.p_n.x.array
             self.p_n.x.array[:] = self.p.x.array
+            if i % frames_to_store == 0:
+                pressure_data.append(self.p.x.array.copy())
+        
+        stored_times = times[::frames_to_store]
+        return np.array(pressure_data), stored_times
+    
+
+type BcConfigValue = float | int | tp.Literal["hard", "absorbing"]
+
+
+class DampedWaveSolver(IProblemSolver):
+    def __init__(self, mesh, facet_markers, source_term: ISourceTerm, config: TimeDomainConfigProtocol, bc_config: dict[int, BcConfigValue]):
+        """
+        Args:
+            bc_config ex. {1: "hard", 2: "absorbing", 4: 500}
+        """
+        self.mesh = mesh
+        self.facet_markers = facet_markers
+        self.source_term = source_term
+        self.config = config
+        self.bc_config = bc_config
+        
+        self.V = fem.functionspace(mesh, ("Lagrange", config.deg))
+        
+        self.p = fem.Function(self.V)       # p_n+1
+        self.p_n = fem.Function(self.V)     # p_n
+        self.p_n_1 = fem.Function(self.V)   # p_n-1
+        
+        u, v = ufl.TrialFunction(self.V), ufl.TestFunction(self.V)
+        c0, dt, eta, rho0 = config.c0, config.dt, config.damping_coefficient, config.rho_0
+
+        ds = ufl.Measure("ds", domain=mesh, subdomain_data=self.facet_markers)
+        a = ufl.inner(u, v) * ufl.dx
+        source_amplitude = fem.Constant(mesh, PETSc.ScalarType(0.0))
+        source_spatial = source_term.get_spatial_component()
+        a += (eta * dt / 2) * ufl.inner(u, v) * ufl.dx
+
+        L = (ufl.inner(2 * self.p_n - self.p_n_1, v) * ufl.dx
+             - (c0 * dt)**2 * ufl.inner(ufl.grad(self.p_n), ufl.grad(v)) * ufl.dx
+             + (c0 * dt)**2 * ufl.inner(source_amplitude * source_spatial, v) * ufl.dx)
+        L += (eta * dt / 2) * ufl.inner(self.p_n_1, v) * ufl.dx
+
+        for tag, R_value in self.bc_config.items():
+            if R_value == "hard":
+                continue 
+            elif R_value == "absorbing":
+                R = rho0 * c0
+            else:
+                R = float(R_value)
+
+            beta = dt * c0**2 * rho0 / R
+            
+            a += beta * ufl.inner(u, v) * ds(tag)
+            L += beta * ufl.inner(self.p_n, v) * ds(tag)
+
+        # --- Настройка решателя (как и раньше) ---
+        self.source_amplitude = source_amplitude
+        self.a_form = fem.form(a)
+        self.L_form = fem.form(L)
+        self.A = petsc.assemble_matrix(self.a_form)
+        self.A.assemble()
+        self.b = petsc.create_vector(self.L_form)
+        self.p_petsc = self.A.createVecRight()
+        self.solver = PETSc.KSP().create(mesh.comm)
+        self.solver.setOperators(self.A)
+        self.solver.setType(PETSc.KSP.Type.PREONLY)
+        self.solver.getPC().setType(PETSc.PC.Type.LU)
+        
+    def solve(self, frames_to_store=20):
+        # Этот метод остается без изменений
+        times = np.arange(0, self.config.t_end, self.config.dt)
+        pressure_data = []
+
+        print("Starting damped wave simulation...")
+        for i, t in enumerate(tqdm.tqdm(times)):
+            self.source_amplitude.value = self.source_term.get_value_at_time(t)
+            
+            with self.b.localForm() as loc_b:
+                loc_b.set(0)
+            petsc.assemble_vector(self.b, self.L_form)
+            
+            self.solver.solve(self.b, self.p_petsc)
+            
+            self.p.x.array[:] = self.p_petsc.array
+            self.p.x.scatter_forward()
+            
+            self.p_n_1.x.array[:] = self.p_n.x.array
+            self.p_n.x.array[:] = self.p.x.array
+            
             if i % frames_to_store == 0:
                 pressure_data.append(self.p.x.array.copy())
         
