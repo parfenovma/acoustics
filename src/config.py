@@ -57,7 +57,7 @@ class TimeDomainSimulationConfig:
     # Hamming pulse 
     pulse_duration: float = 0.001 # Hamming window duration [s]
     pulse_carrier_freq: float = 2000.0 # main sinusoidal frequency [Hz]
-    Sx: float = 0.5; Sy: float = 0.5
+    Sx: float = 0.2; Sy: float = 0.5
     
     # Physical constants
     c0: float = 340.0

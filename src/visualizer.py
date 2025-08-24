@@ -126,7 +126,7 @@ class MatplotlibTimeVisualizer(IVisualizer):
             self.p_vis.interpolate(p_sol_frame)
 
             ax.tricontourf(self.triang, self.p_vis.x.array, levels=40, cmap='RdBu_r', vmax=vmax, vmin=vmin)
-            ax.set_title(f"Pressure at t = {times[frame]*1000:.3f} ms") # More precision in title
+            ax.set_title(f"Pressure at t = {times[frame]*1000:.3f} ms\n damping_coefficient is {self.config.damping_coefficient}") # More precision in title
             return []
 
         ani = animation.FuncAnimation(fig, update, frames=len(times), interval=50, blit=False)
