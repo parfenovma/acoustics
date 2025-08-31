@@ -9,8 +9,9 @@ import mpi4py.MPI as MPI
 
 
 class IMeshGenerator(abc.ABC):
+
     @abc.abstractmethod
-    def generate(self) -> tuple[dolfinx.mesh.Mesh, ...]:
+    def generate(self) -> tuple[dolfinx.mesh.Mesh, dolfinx.mesh.MeshTags, dict]:
         pass
 
 
@@ -39,12 +40,10 @@ class GmshChannelMesh(IMeshGenerator):
             right_line = gmsh.model.geo.addLine(p2, p3)
             top_curve = gmsh.model.geo.addLine(p3, p4)
             left_line = gmsh.model.geo.addLine(p4, p1)
-            # FIX: For rigid boundaries, all curves are already in order. No reversal needed.
             curve_loop_tags = [bottom_curve, right_line, top_curve, left_line]
         else:
             raise ValueError("boundary_type must be 'wavy' or 'rigid'")
 
-        # --- THIS IS THE CORRECTED PART ---
         loop = gmsh.model.geo.addCurveLoop(curve_loop_tags)
         surface = gmsh.model.geo.addPlaneSurface([loop])
         gmsh.model.geo.synchronize()
@@ -59,7 +58,7 @@ class GmshChannelMesh(IMeshGenerator):
 
         msh, _, facet_markers = io.gmshio.model_to_mesh(gmsh.model, MPI.COMM_WORLD, 0, gdim=2)
         gmsh.finalize()
-        return msh, facet_markers
+        return msh, facet_markers, {}
 
     def _create_boundary_points(self, y_func):
         points = []
@@ -96,13 +95,10 @@ class GmshMeshWithPML(IMeshGenerator):
         gmsh.initialize()
         gmsh.model.add("pml_mesh")
         
-        # Tags for physical groups
         DOMAIN_TAG, PML_TAG = 1, 2
 
-        # Main domain
         main_rect = gmsh.model.occ.addRectangle(0, 0, 0, cfg.width, cfg.height)
         
-        # Create PML layers
         pml_rects = []
         if "bottom" in self.pml_boundaries:
             pml_rects.append(gmsh.model.occ.addRectangle(0, -L_pml, 0, cfg.width, L_pml))
@@ -118,7 +114,6 @@ class GmshMeshWithPML(IMeshGenerator):
         gmsh.model.occ.fragment(all_shapes, [])
         gmsh.model.occ.synchronize()
 
-        # Find and tag regions
         domain_center = (cfg.width/2, cfg.height/2, 0)
         vols = gmsh.model.getEntities(dim=2)
         main_domain_tag = -1
@@ -141,7 +136,7 @@ class GmshMeshWithPML(IMeshGenerator):
         
         msh, cell_markers, _ = io.gmshio.model_to_mesh(gmsh.model, MPI.COMM_WORLD, 0, gdim=2)
         gmsh.finalize()
-        return msh, cell_markers
+        return msh, cell_markers, {}
 
 
 class GmshBoundaryTaggedMesh(IMeshGenerator):
@@ -153,7 +148,6 @@ class GmshBoundaryTaggedMesh(IMeshGenerator):
         gmsh.initialize()
         gmsh.model.add("boundary_tagged_mesh")
         
-        # Создаем геометрию
         p1 = gmsh.model.occ.addPoint(0, 0, 0)
         p2 = gmsh.model.occ.addPoint(cfg.width, 0, 0)
         p3 = gmsh.model.occ.addPoint(cfg.width, cfg.height, 0)
@@ -168,20 +162,86 @@ class GmshBoundaryTaggedMesh(IMeshGenerator):
         surface = gmsh.model.occ.addPlaneSurface([curve_loop])
         gmsh.model.occ.synchronize()
 
-        # Создаем физические группы для границ и домена
-        # Теги: 1-низ, 2-право, 3-верх, 4-лево, 5-домен
         gmsh.model.addPhysicalGroup(1, [l_bottom], 1)
         gmsh.model.addPhysicalGroup(1, [l_right], 2)
         gmsh.model.addPhysicalGroup(1, [l_top], 3)
         gmsh.model.addPhysicalGroup(1, [l_left], 4)
         gmsh.model.addPhysicalGroup(2, [surface], 5)
 
-        # Меширование
         lc = 1.0 / cfg.n_elem
         gmsh.option.setNumber("Mesh.CharacteristicLengthMax", lc)
         gmsh.model.mesh.generate(2)
         
-        # Импорт в dolfinx
         msh, _, facet_markers = io.gmshio.model_to_mesh(gmsh.model, MPI.COMM_WORLD, 0, gdim=2)
         gmsh.finalize()
-        return msh, facet_markers
+        return msh, facet_markers, {}
+
+
+class GmshMeshWithObstacles(IMeshGenerator):
+    def __init__(self, config: PMLConfigProtocol):
+        self.config = config
+
+    def generate(self):
+        cfg = self.config
+        gmsh.initialize()
+        gmsh.model.add("mesh_with_obstacles")
+
+        geo_description = {
+            "obstacles": [],
+            "box": (cfg.width, cfg.height)
+        }
+        
+        outer_box = gmsh.model.occ.addRectangle(0, 0, 0, cfg.width, cfg.height)
+    
+        # rect_params = {"type": "rectangle", "origin": (0.2, 0.2), "size": (0.6, 0.1)}
+        # obstacle1 = gmsh.model.occ.addRectangle(*rect_params["origin"], 0, *rect_params["size"])
+        # geo_description["obstacles"].append(rect_params)
+
+        disk_params = {"type": "disk", "center": (0.6, 0.5), "radii": (0.05, 0.05)}
+        obstacle2 = gmsh.model.occ.addDisk(*disk_params["center"], 0, *disk_params["radii"])
+        geo_description["obstacles"].append(disk_params)
+        
+        final_shape, _ = gmsh.model.occ.cut([(2, outer_box)], 
+                                            [(2, obstacle2)],
+                                            removeTool=True)
+        
+        gmsh.model.occ.synchronize()
+
+        
+        all_boundaries = gmsh.model.getBoundary(final_shape, combined=False, oriented=False)
+        
+        bottom_b, right_b, top_b, left_b = [], [], [], []
+        obstacle_b = []
+        
+        for curve_dim, curve_tag in all_boundaries:
+            com = gmsh.model.occ.getCenterOfMass(curve_dim, curve_tag)
+            cx, cy = com[0], com[1]
+            
+            if np.isclose(cy, 0.0):
+                bottom_b.append(curve_tag)
+            elif np.isclose(cx, cfg.width):
+                right_b.append(curve_tag)
+            elif np.isclose(cy, cfg.height):
+                top_b.append(curve_tag)
+            elif np.isclose(cx, 0.0):
+                left_b.append(curve_tag)
+            else:
+                obstacle_b.append(curve_tag)
+
+        gmsh.model.addPhysicalGroup(1, bottom_b, 1)
+        gmsh.model.addPhysicalGroup(1, right_b, 2)
+        gmsh.model.addPhysicalGroup(1, top_b, 3)
+        gmsh.model.addPhysicalGroup(1, left_b, 4)
+        
+        if obstacle_b:
+            gmsh.model.addPhysicalGroup(1, obstacle_b, 10)
+        
+        gmsh.model.addPhysicalGroup(2, [final_shape[0][1]], 5)
+
+        lc = 1.0 / cfg.n_elem
+        gmsh.option.setNumber("Mesh.CharacteristicLengthMax", lc)
+        gmsh.model.mesh.generate(2)
+        
+        msh, _, facet_markers = io.gmshio.model_to_mesh(gmsh.model, MPI.COMM_WORLD, 0, gdim=2)
+        gmsh.finalize()
+        return msh, facet_markers, geo_description

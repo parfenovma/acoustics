@@ -262,7 +262,6 @@ class HammingPulseSource(ISourceTerm):
     """
     def __init__(self, V: fem.FunctionSpace, config: HammingPulseConfigProtocol):
         self.config = config
-        # Пространственная часть точно такая же, как раньше
         self._spatial_component = fem.Function(V)
         alfa = 0.015
         self._spatial_component.interpolate(
@@ -277,7 +276,6 @@ class HammingPulseSource(ISourceTerm):
         cfg = self.config
         T = cfg.pulse_duration
         
-        # Если время t находится вне окна, источник равен нулю
         if not (0 <= t <= T):
             return 0.0
         
@@ -367,34 +365,28 @@ class ImpedanceBCSolver(IProblemSolver):
         u, v = ufl.TrialFunction(self.V), ufl.TestFunction(self.V)
         c0, dt = config.c0, config.dt
 
-        # --- Вариационная форма с граничным членом ---
-        # Интеграл по границе dS
         ds = ufl.Measure("ds", domain=mesh, subdomain_data=self.facet_markers)
 
-        # Слабая форма для ∇p⋅n = -(1/c₀) * ∂p/∂t
-        # ∂p/∂t аппроксимируем как (p - p_n-1) / (2*dt) - центральная разность
-        # Граничный член: ∫(∇p⋅n)v dS = - (1/c0) * ∫(∂p/∂t)v dS ≈ -1/(c0*2*dt) * ∫(p - p_n-1)v dS
+        # wf for ∇p⋅n = -(1/c₀) * ∂p/∂t
+        # ∂p/∂t is approximated like (p - p_n-1) / (2*dt)
+        # border condition: ∫(∇p⋅n)v dS = - (1/c0) * ∫(∂p/∂t)v dS ≈ -1/(c0*2*dt) * ∫(p - p_n-1)v dS
 
-        # Правая часть (RHS)
+        # (RHS)
         source_amplitude = fem.Constant(mesh, PETSc.ScalarType(0.0))
         source_spatial = source_term.get_spatial_component()
         
 
-        # Левая часть (LHS) - содержит неизвестное 'p'
+        # (LHS) - contains unknown 'p'
         a = ufl.inner(u, v) * ufl.dx + sum((dt * c0) * ufl.inner(u, v) * ds(tag) for tag in self.bc_tags)
 
-        # Правая часть (RHS)
+        # (RHS)
         L = (ufl.inner(2 * self.p_n - self.p_n_1, v) * ufl.dx
             - (c0 * dt)**2 * ufl.inner(ufl.grad(self.p_n), ufl.grad(v)) * ufl.dx
             + (c0 * dt)**2 * ufl.inner(source_amplitude * source_spatial, v) * ufl.dx
             + sum((dt * c0) * ufl.inner(self.p_n, v) * ds(tag) for tag in self.bc_tags))
 
-
-        # --- Настройка решателя ---
-        # Эта часть кода немного сложнее из-за нестандартной формы
-        self.source_amplitude = source_amplitude # Сохраняем для обновления
+        self.source_amplitude = source_amplitude
         
-        # Используем PETSc для решения, как раньше
         self.a_form = fem.form(a)
         self.L_form = fem.form(L)
         self.A = petsc.assemble_matrix(self.a_form)
@@ -407,7 +399,6 @@ class ImpedanceBCSolver(IProblemSolver):
         self.solver.getPC().setType(PETSc.PC.Type.LU)
         
     def solve(self, frames_to_store=20):
-        # Цикл по времени идентичен предыдущему
         times = np.arange(0, self.config.t_end, self.config.dt)
         pressure_data = []
 
@@ -475,7 +466,6 @@ class DampedWaveSolver(IProblemSolver):
             a += beta * ufl.inner(u, v) * ds(tag)
             L += beta * ufl.inner(self.p_n, v) * ds(tag)
 
-        # --- Настройка решателя (как и раньше) ---
         self.source_amplitude = source_amplitude
         self.a_form = fem.form(a)
         self.L_form = fem.form(L)
@@ -489,7 +479,6 @@ class DampedWaveSolver(IProblemSolver):
         self.solver.getPC().setType(PETSc.PC.Type.LU)
         
     def solve(self, frames_to_store=20):
-        # Этот метод остается без изменений
         times = np.arange(0, self.config.t_end, self.config.dt)
         pressure_data = []
 

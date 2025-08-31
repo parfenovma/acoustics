@@ -103,5 +103,35 @@ def main_damped_and_impedance():
     
     plt.show()
 
+def main_w_obstacles():
+    config = cfg.TimeDomainSimulationConfig(
+        damping_coefficient=700.0, 
+        # visualization params are in config now
+        t_end=0.005,
+        vmax=0.001
+    )
+    
+    mesh_gen = msh.GmshMeshWithObstacles(config)
+    mesh, facet_markers, geo_desc = mesh_gen.generate()
+    
+    V_space = fem.functionspace(mesh, ("Lagrange", config.deg))
+    source = problem.HammingPulseSource(V_space, config)
+    
+    boundary_conditions = {
+        1: "absorbing", # bottom
+        2: "absorbing", # right
+        3: "absorbing", # top
+        4: "absorbing"  # left
+    }
+    
+    solver = problem.DampedWaveSolver(mesh, facet_markers, source, config, bc_config=boundary_conditions)
+    
+    pressure_history, times_stored = solver.solve(frames_to_store=config.frames_to_store)
+    
+    visualizer = vis.MatplotlibTimeVisualizer(mesh, config, geo_desc)
+    visualizer.create_animation(pressure_history, times_stored, f"animations/damped_wave_obstacles{"_".join(str(v) for v in boundary_conditions.values())}.gif")
+    
+    plt.show()
+
 if __name__ == "__main__":
-    main_damped_and_impedance()
+    main_w_obstacles()

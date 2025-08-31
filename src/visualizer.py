@@ -92,7 +92,7 @@ class MatplotlibVisualizer(IVisualizer):
 
 
 class MatplotlibTimeVisualizer(IVisualizer):
-    def __init__(self, mesh, config: cfg.ConfigProtocol):
+    def __init__(self, mesh, config: cfg.ConfigProtocol, geo_description: dict = {}):
         self.mesh = mesh
         self.config = config
 
@@ -105,6 +105,7 @@ class MatplotlibTimeVisualizer(IVisualizer):
         # We need a P1 function to project the high-order solution onto for visualization
         self.p_vis = fem.Function(V_vis)
         self.deg = config.deg
+        self.geo_description = geo_description
 
     def create_animation(self, pressure_over_time: np.ndarray, times: np.ndarray, output_filename=None):
         fig, ax = plt.subplots(figsize=(8, 6))
@@ -142,11 +143,23 @@ class MatplotlibTimeVisualizer(IVisualizer):
         cfg = self.config
         ax.set_aspect('equal')
         ax.set_xlabel('X [m]'); ax.set_ylabel('Y [m]')
+        box_width, box_height = self.geo_description.get("box", (cfg.width, cfg.height))
         ax.add_patch(plt.Rectangle((0, 0), cfg.width, cfg.height, fill=False, color='k', lw=2))
+        for obs in self.geo_description.get("obstacles", []):
+            if obs["type"] == "rectangle":
+                ax.add_patch(plt.Rectangle(
+                    obs["origin"], *obs["size"], 
+                    fill=True, color='gray', lw=1, ec='k', zorder=5
+                ))
+            elif obs["type"] == "disk":
+                ax.add_patch(plt.Circle(
+                    obs["center"], obs["radii"][0],
+                    fill=True, color='gray', lw=1, ec='k', zorder=5
+                ))
         ax.plot(cfg.Sx, cfg.Sy, 'black', markersize=20, label='Source')
         ax.legend(loc="upper right")
-        ax.set_xlim(-0.1, cfg.width + 0.1)
-        ax.set_ylim(-0.1, cfg.height + 0.1)
+        ax.set_xlim(-0.1, box_width + 0.1)
+        ax.set_ylim(-0.1, box_height + 0.1)
 
     def create_static_plot(self, output_filename = None):
         return super().create_static_plot(output_filename)
